@@ -45,10 +45,10 @@ reqURL <- 'https://api.twitter.com/oauth/request_token'
 accessURL <- 'https://api.twitter.com/oauth/access_token'
 authURL <- 'https://api.twitter.com/oauth/authorize'
 
-consumerKey="nfxSuDdBpukcI4JDygqH7zCxl" # similar to api_key
-consumerSecret="5h4KxAIKQKFAGWWpP5h9QB0LCIf0vDcsoLV3rcEra1BxdcYg3O" # similar to api_secret_key
-accesstoken="1504565021057110019-uzG9cDVt9YyomWwSGtAGXX5rODelMz"
-accesssecret="hTN2u7uLvQFiS25Z2Slk45Svr83yi9QgJ02zOvGJsBw2m"
+consumerKey="" # similar to api_key
+consumerSecret="" # similar to api_secret_key
+accesstoken=""
+accesssecret=""
 
 my_oauth <- OAuthFactory$new(consumerKey = consumerKey,
                              consumerSecret = consumerSecret)

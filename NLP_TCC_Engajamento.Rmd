@@ -1,0 +1,164 @@
+---
+title: "Projeto TCC - NLP"
+author: "Clara Octaviano Messina"
+date: "11/09/2022"
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Carrega os pacotes, echo=TRUE}
+library("dplyr")
+library("plyr")
+library("tidytext")
+library("ggplot2")
+library("textdata")
+library("lexiconPT")
+library("stringr")
+library("tidyr")
+library("wordcloud")
+library("readxl")
+library("tidyverse")
+library("twitteR")
+library("ROAuth")
+library("httr")
+library("RCurl")
+library("openssl")
+library("httpuv")
+library("base64enc")
+library("devtools")
+library("bitops")
+```
+
+# Carregando dataset 
+# Dataset tratado, com coluna já sem stopwords e pontuação (processo realizado no Python)
+```{r Abrir Dataset, echo=TRUE}
+dataset_twitter <- read_csv("tbl_twitter.csv")
+View(dataset_twitter)
+```
+
+
+# Construção de uma WordCloud
+```{r}
+# Instalação dos pacotes que serão utilizados para a etapa
+install.packages("wordcloud")
+library(wordcloud)
+install.packages("RColorBrewer")
+library(RColorBrewer)
+install.packages("wordcloud2")
+library(wordcloud2)
+install.packages("tm")
+library(tm)
+
+# Criando um vetor que contém somente 'texto'
+text <- dataset_twitter$text_sem_stopwords
+
+docs <- Corpus(VectorSource(text))
+
+# Extração das hashtags de cada um dos tweets
+hashtag <- stringr::str_extract_all(text, '#\\w+') 
+
+# Limpeza do texto : removendo números, pontuação e espaço em branco. Removação de stopwords e consolidação dos textos em letras minúsculas. 
+docs <- docs %>%  
+        tm_map(removeNumbers) %>%
+        tm_map(removePunctuation) %>%
+        tm_map(stripWhitespace)
+
+
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, removeWords, stopwords("portuguese"))
+
+```
+
+```{r}
+# Criando um df com cada palavra em sua primeira coluna e sua respectiva frequência
+dtm <- TermDocumentMatrix(docs) 
+matrix <- as.matrix(dtm) 
+words <- sort(rowSums(matrix),decreasing=TRUE) 
+df <- data.frame(word = names(words),freq=words) # df que contém cada uma das frequências das palavras
+# write.csv(df,"palavras_frequencia_v2.csv", row.names = TRUE)
+```
+
+```{r}
+# Gerando a wordcloud
+set.seed(1234) # for reproducibility 
+
+wordcloud(words = df$word, freq = df$freq, min.freq = 100, max.words=100, random.order=FALSE, rot.per=0.20, colors=brewer.pal(8, "Dark2"))
+```
+# Por que usar wordcloud ?
+# 1. São ótimas ferramentas de visualização. Apresentam dados de texto de forma simples e clara, em que o tamanho das palavras depende de suas respectivas frequências. Sua compreensão é fácil e rápida. 
+# 2. São ótimas ferramentas de comunicação. São incrivelmente úteis para quem deseja comunica uma visão básica com base em dados de texto, seja para analisar um discurso ou capturar informações de mídias sociais.
+# 3. São perspicazes e visualmente atraentes, permitindo a extração de insights rapidamente. 
+
+
+```{r}
+#Vejamos visualmente:
+head(df, n=10) %>%
+  ggplot(aes(x=reorder(word,freq), freq)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  geom_text(aes(hjust = 1, label = freq)) + 
+  coord_flip() + 
+  labs(title = "Palavras mais mencionadas",  x = "Palavras", y = "Número de usos")
+```
+
+# Para as palavras em português: 
+  * Coletar as palavras mais repetidas dentre todos os tweets e analisar o sentimento individualmente. 
+```{r, echo=TRUE}
+# Trazem uma coluna com o termo/palavra e outras informações, sendo a polaridade a principal delas, pois indica se o termo está associado a um sentimento negativo ou positivo, e que será utilizado para fazer a análise de sentimentos. 
+
+oplex <- lexiconPT::oplexicon_v3.0 #  é composto por uma lista de palavras classificadas com a sua categoria morfológica e anotadas com a polaridade positiva, negativa ou neutra.
+sentilex <- lexiconPT::sentiLex_lem_PT02 # é um léxico de sentimento especificamente concebido para a
+#análise de sentimento e opinião sobre entidades humanas em textos redigidos em português
+
+glimpse(oplex)
+glimpse(sentilex)
+```
+
+# Etapa de Tokenização
+
+# Etapa 1: desagregar a informação das mensagens de texto, de modo que seja separada as mensagens em várias palavras ou tokens
+
+```{r}
+dataset_twitter <- dataset_twitter %>% dplyr::mutate(comment_id=row_number())
+```
+
+```{r}
+# Separa coluna "text_sem_stopwords", que são os tweets já com tratamento feito, em n tokens/palavras
+df_token <- dataset_twitter %>%
+tidytext::unnest_tokens(output = "term", input = "text_sem_stopwords")
+# Resultado é a coluna "term" com um token/palavra por linha do data frame
+dplyr::glimpse(df_token)
+
+# Ao final desta etapa, é possível observar como aumentou o número de linhas da nossa base de dados. 
+```
+
+# Análise de Sentimentos
+# O resultado desta etapa é um novo dataset com a identificação de cada um dos tweets e seu respectivo sentimento (soma da polaridade) obtido através dos tokens extraídos acima. É possível observar que houve perda de observação pois algumas palavras não estão presentes nos léxicos selecionados. 
+```{r}
+# 1) Juntar tokens com léxicos e obter polaridade por tweet
+# Juntar dados
+df_sent <- purrr::reduce(
+.x = list(
+df_token,
+oplex,
+dplyr::select(sentilex, term, lex_polarity = polarity)
+),
+.f = dplyr::inner_join,
+by = "term"
+) %>%
+# Agrupar por identificador único de cada tweet
+dplyr::group_by(comment_id) %>%
+# Obter sentimento total de cada tweet de acordo com polaridade
+# para saber quão negativo/positivo é um tweet
+dplyr::summarise(
+tweet_oplex = sum(polarity),
+tweet_sentilex = sum(lex_polarity)
+) %>%
+dplyr::ungroup()
+dplyr::glimpse(df_sent)
+```
+

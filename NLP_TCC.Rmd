@@ -1,0 +1,335 @@
+---
+title: "Projeto TCC - NLP"
+author: "Clara Octaviano Messina"
+date: "24/06/2022"
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Carrega os pacotes, echo=TRUE}
+library("dplyr")
+library("plyr")
+library("tidytext")
+library("ggplot2")
+library("textdata")
+library("lexiconPT")
+library("stringr")
+library("tidyr")
+library("wordcloud")
+library("readxl")
+library("tidyverse")
+library("twitteR")
+library("ROAuth")
+library("httr")
+library("RCurl")
+library("openssl")
+library("httpuv")
+library("base64enc")
+library("devtools")
+library("bitops")
+```
+
+# Conexão API
+```{r API Twitter, echo=TRUE}
+oauth_endpoint(authorize = "https://api.twitter.com/oauth",
+               access = "https://api.twitter.com/oauth/access_token")
+
+#connect to API
+download.file(url ='http://curl.haxx.se/ca/cacert.pem', destfile ='cacert.pem')
+reqURL <- 'https://api.twitter.com/oauth/request_token'
+accessURL <- 'https://api.twitter.com/oauth/access_token'
+authURL <- 'https://api.twitter.com/oauth/authorize'
+
+consumerKey="nfxSuDdBpukcI4JDygqH7zCxl" # similar to api_key
+consumerSecret="5h4KxAIKQKFAGWWpP5h9QB0LCIf0vDcsoLV3rcEra1BxdcYg3O" # similar to api_secret_key
+accesstoken="1504565021057110019-uzG9cDVt9YyomWwSGtAGXX5rODelMz"
+accesssecret="hTN2u7uLvQFiS25Z2Slk45Svr83yi9QgJ02zOvGJsBw2m"
+
+my_oauth <- OAuthFactory$new(consumerKey = consumerKey,
+                             consumerSecret = consumerSecret)
+
+cred <- OAuthFactory$new(consumerKey=consumerKey,
+                         consumerSecret=consumerSecret,
+                         requestURL=reqURL,
+                         accessURL=accessURL,
+                         authURL=authURL)
+setup_twitter_oauth(consumer_key = consumerKey,consumer_secret = consumerSecret,
+                    access_token = accesstoken,access_secret = accesssecret)
+```
+
+# Coletando os dados mais recentes, via API
+```{r coleta dados API, echo=TRUE}
+# Filtrar screenName = fatooufake
+fato_ou_fake <- searchTwitter('fatooufake', n=10000)
+fato_ou_fake_df = twListToDF(fato_ou_fake)
+so_fato_fake <- fato_ou_fake_df %>% filter(screenName=='fatooufake') # selecionando somente aqueles que foram postados pela pagina @fatooufake
+```
+# Carregando dataset 
+# Dataset tratado, com coluna já sem stopwords e pontuação (processo realizado no Python)
+```{r Abrir Dataset, echo=TRUE}
+dataset_twitter <- read_csv("df_twitter_tratado.csv")
+View(dataset_twitter)
+```
+
+
+# Construção de uma WordCloud
+```{r}
+# Instalação dos pacotes que serão utilizados para a etapa
+install.packages("wordcloud")
+library(wordcloud)
+install.packages("RColorBrewer")
+library(RColorBrewer)
+install.packages("wordcloud2")
+library(wordcloud2)
+install.packages("tm")
+library(tm)
+
+# Criando um vetor que contém somente 'texto'
+text <- dataset_twitter$text_sem_stopwords
+
+docs <- Corpus(VectorSource(text))
+
+# Extração das hashtags de cada um dos tweets
+hashtag <- stringr::str_extract_all(text, '#\\w+') 
+
+# Limpeza do texto : removendo números, pontuação e espaço em branco. Removação de stopwords e consolidação dos textos em letras minúsculas. 
+docs <- docs %>%  
+        tm_map(removeNumbers) %>%
+        tm_map(removePunctuation) %>%
+        tm_map(stripWhitespace)
+
+
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, removeWords, stopwords("portuguese"))
+
+```
+
+```{r}
+# Criando um df com cada palavra em sua primeira coluna e sua respectiva frequência
+dtm <- TermDocumentMatrix(docs) 
+matrix <- as.matrix(dtm) 
+words <- sort(rowSums(matrix),decreasing=TRUE) 
+df <- data.frame(word = names(words),freq=words) # df que contém cada uma das frequências das palavras
+# write.csv(df,"palavras_frequencia.csv", row.names = TRUE)
+```
+
+```{r}
+# Gerando a wordcloud
+set.seed(1234) # for reproducibility 
+
+wordcloud(words = df$word, freq = df$freq, min.freq = 90, max.words=200, random.order=FALSE, rot.per=0.20, colors=brewer.pal(8, "Dark2"))
+```
+# Por que usar wordcloud ?
+# 1. São ótimas ferramentas de visualização. Apresentam dados de texto de forma simples e clara, em que o tamanho das palavras depende de suas respectivas frequências. Sua compreensão é fácil e rápida. 
+# 2. São ótimas ferramentas de comunicação. São incrivelmente úteis para quem deseja comunica uma visão básica com base em dados de texto, seja para analisar um discurso ou capturar informações de mídias sociais.
+# 3. São perspicazes e visualmente atraentes, permitindo a extração de insights rapidamente. 
+
+
+```{r}
+#Vejamos visualmente:
+head(df, n=10) %>%
+  ggplot(aes(x=reorder(word,freq), freq)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  geom_text(aes(hjust = 1, label = freq)) + 
+  coord_flip() + 
+  labs(title = "Palavras mais mencionadas",  x = "Palavras", y = "Número de usos")
+```
+
+# Para as palavras em português: 
+  * Coletar as palavras mais repetidas dentre todos os tweets e analisar o sentimento individualmente. 
+```{r, echo=TRUE}
+# Trazem uma coluna com o termo/palavra e outras informações, sendo a polaridade a principal delas, pois indica se o termo está associado a um sentimento negativo ou positivo, e que será utilizado para fazer a análise de sentimentos. 
+
+oplex <- lexiconPT::oplexicon_v3.0 #  é composto por uma lista de palavras classificadas com a sua categoria morfológica e anotadas com a polaridade positiva, negativa ou neutra.
+sentilex <- lexiconPT::sentiLex_lem_PT02 # é um léxico de sentimento especificamente concebido para a
+#análise de sentimento e opinião sobre entidades humanas em textos redigidos em português
+
+glimpse(oplex)
+glimpse(sentilex)
+```
+
+# Etapa de Tokenização
+
+# Etapa 1: desagregar a informação das mensagens de texto, de modo que seja separada as mensagens em várias palavras ou tokens
+
+```{r}
+dataset_twitter <- dataset_twitter %>% dplyr::mutate(comment_id=row_number())
+```
+
+```{r}
+# Separa coluna "text_sem_stopwords", que são os tweets já com tratamento feito, em n tokens/palavras
+df_token <- dataset_twitter %>%
+tidytext::unnest_tokens(output = "term", input = "text_sem_stopwords")
+# Resultado é a coluna "term" com um token/palavra por linha do data frame
+dplyr::glimpse(df_token)
+
+# Ao final desta etapa, é possível observar como aumentou o número de linhas da nossa base de dados. 
+```
+
+# Análise de Sentimentos
+# O resultado desta etapa é um novo dataset com a identificação de cada um dos tweets e seu respectivo sentimento (soma da polaridade) obtido através dos tokens extraídos acima. É possível observar que houve perda de observação pois algumas palavras não estão presentes nos léxicos selecionados. 
+```{r}
+# 1) Juntar tokens com léxicos e obter polaridade por tweet
+# Juntar dados
+df_sent <- purrr::reduce(
+.x = list(
+df_token,
+oplex,
+dplyr::select(sentilex, term, lex_polarity = polarity)
+),
+.f = dplyr::inner_join,
+by = "term"
+) %>%
+# Agrupar por identificador único de cada tweet
+dplyr::group_by(comment_id) %>%
+# Obter sentimento total de cada tweet de acordo com polaridade
+# para saber quão negativo/positivo é um tweet
+dplyr::summarise(
+tweet_oplex = sum(polarity),
+tweet_sentilex = sum(lex_polarity)
+) %>%
+dplyr::ungroup()
+dplyr::glimpse(df_sent)
+```
+
+# Será feito um tratamento adicional dos dados de modo a obter o sentimento mensal desse conjunto amostral
+```{r}
+# Juntar dados de tweets e polaridades
+df_sent_by_date <- dplyr::inner_join(dataset_twitter, df_sent, by = "X1") %>%
+# Filtrar somente polaridades positivas/negativas
+dplyr::filter(tweet_oplex != 0) %>%
+# Obter quantidade de tweets com sentimento "negativo/positivo" por dia
+dplyr::count(
+sentiment = dplyr::if_else(tweet_oplex < 0, "negativo", "positivo"),
+date = as.Date(created_date)
+) %>%
+# Converter para formato wide
+tidyr::pivot_wider(
+id_cols = `date`,
+names_from = `sentiment`,
+values_from = `n`
+) %>%
+# Obter sentimento mensal
+dplyr::mutate(sentimento = positivo - negativo)
+dplyr::glimpse(df_sent_by_date)
+```
+
+
+
+
+#### ATÉ AQUI ! ####
+
+```{r}
+library(tidyverse) # pq nao da pra viver sem
+library(ggExtra)
+library(magrittr) # <3
+library(lubridate)
+library(stringr) # essencial para trabalhar com textos
+library(tidytext) # um dos melhores pacotes para text mining
+library(lexiconPT)
+```
+
+
+```{r}
+# Criando um ID para cada um dos comentários
+dataset_twitter <- dataset_twitter %>% mutate(comment_id = row_number())
+
+# usar funçao do tidytext para criar uma linha para cada palavra de um comentario
+df_comments_unnested <- dataset_twitter %>% unnest_tokens(term, text)
+
+df_comments_unnested %>%
+  select(comment_id, term) %>%
+  head(20)
+
+```
+```{r}
+df_comments_unnested %>% 
+  left_join(op30, by = "term") %>% 
+  left_join(sent %>% select(term, lex_polarity = polarity), by = "term") %>% 
+  select(comment_id, term, polarity, lex_polarity) %>% 
+  head(30)
+```
+# A partir dos dados acima, é possível observar que nem todas as palavras possuem uma polaridade registrada nos léxicos. Algumas palavras, como chulas, social, referir estão presente em um deles mas não em outro. A polaridade = 1 significa que, de acordo com o léxico, a palavra está associada a comentários positivos. 
+
+```{r}
+# Mantendo somente as palavras que possuem polaridade em algum dos léxicos
+df_comments_unnested <- df_comments_unnested %>% 
+  inner_join(op30, by = "term") %>% 
+  inner_join(sent %>% select(term, lex_polarity = polarity), by = "term") %>% 
+  group_by(comment_id) %>% 
+  summarise(
+    comment_sentiment_op = sum(polarity),
+    comment_sentiment_lex = sum(lex_polarity),
+    n_words = n()
+    ) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(
+    most_neg = min(comment_sentiment_lex, comment_sentiment_op),
+    most_pos = max(comment_sentiment_lex, comment_sentiment_op)
+  )
+
+```
+
+```{r}
+p <- df_comments_unnested %>% 
+  ggplot(aes(x = comment_sentiment_op, y = comment_sentiment_lex)) +
+    geom_point(aes(color = n_words)) + 
+    scale_color_continuous(low = "green", high = "red") +
+    labs(x = "Polaridade no OpLexicon", y = "Polaridade no SentiLex") +
+    #geom_smooth(method = "lm") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    geom_hline(yintercept = 0, linetype = "dashed")
+
+p # Não é possível observar nenhum agrupamento. Todos os casos estão bastante espalhados pelo plano. 
+```
+
+```{r}
+df_comments_unnested %<>% filter(between(comment_sentiment_op, -10, 10))
+
+# comentario mais positivo da historia do sensacionalista
+most_pos <- which.max(df_comments_unnested$most_pos)
+most_neg <- which.min(df_comments_unnested$most_neg)
+
+# mais positivo
+cat(dataset_twitter$text[dataset_twitter$comment_id == df_comments_unnested$comment_id[most_pos]])
+
+# mais negativo
+cat(dataset_twitter$text[dataset_twitter$comment_id == df_comments_unnested$comment_id[most_neg]])
+
+```
+
+```{r}
+# mais negativo
+cat(dataset_twitter$text[dataset_twitter$comment_id == df_comments_unnested$comment_id[most_neg]])
+```
+
+```{r}
+dataset_twitter %<>% inner_join(
+  df_comments_unnested %>% select(comment_id, sentiment = comment_sentiment_op),
+  by = "comment_id"
+  )
+```
+
+```{r}
+df_comments_wide <- dataset_twitter %>% 
+  # filtrar fora palavras neutras
+  filter(sentiment != 0) %>% 
+  # converter numerico para categorico
+  mutate(sentiment = ifelse(sentiment < 0, "negativo", "positivo")) %>% 
+  # agrupar os dados
+  count(year_month, account, sentiment) %>% 
+  # converter para formato wide
+  spread(sentiment, n, fill = 0) %>% 
+  mutate(sentimento = positivo - negativo) %>% 
+  ungroup() %>% 
+  arrange(year_month)
+
+head(df_comments_wide) %>% knitr::kable()
+
+```
